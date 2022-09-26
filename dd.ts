@@ -3,13 +3,13 @@ let dPlayerY: number = 0;
 let PlayerX: number = 1;
 let PlayerY: number = 1;
 let PlayerHP: number = 100;
-let PlayerSeeDist: number = 4;
+let PlayerSeeDist: number = 3;
 
 let dGoblinX: number = 0;
 let dGoblinY: number = 0;
 let GoblinX: number = 10;
 let GoblinY: number = 8 ;
-const GoblinAggroDist: number = 4;
+const GoblinAggroDist: number = 10;
 
 const Space = '.'; // 0
 const Wall = '#';  // 1
@@ -35,7 +35,7 @@ const CanvasWidth = 2048;
 const CanvasHeight = 1536;
 
 const DEBUGLineToPlayer = false;
-const DEBUGLineToGoblin = false;
+const DEBUGLineToGoblin = true;
 const DEBUGLineFromPlayerToGoblin = false;
 
 interface tile
@@ -158,11 +158,15 @@ function Draw(MapdPathListToPlayer: Array<number> ): void
                      ++ColIndex)
                 {
                     // Check player can see this far...
-                    if (MapdPathListToPlayer[RowIndex*BoardCols+ColIndex] > PlayerSeeDist)
+                    const TargetTileIndex: number = RowIndex*BoardCols+ColIndex;
+                    if (MapdPathListToPlayer[TargetTileIndex] > PlayerSeeDist && !Board[TargetTileIndex].Splord)
                     {
                         continue;
                     }
-                    const TileId = Board[RowIndex*BoardCols+ColIndex].Value;
+                    // Mark tile as explored..
+                    Board[TargetTileIndex].Splord = true;
+
+                    const TileId: number = Board[TargetTileIndex].Value;
                     if (TileId == TileType.Space)
                     {
                         Ctx.fillStyle = "rgb(50, 50, 50)";
