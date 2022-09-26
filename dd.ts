@@ -2,22 +2,33 @@ let dPlayerX: number = 0;
 let dPlayerY: number = 0;
 let PlayerX: number = 1;
 let PlayerY: number = 1;
+let PlayerHP: number = 100;
+let PlayerSeeDist: number = 4;
 
 let dGoblinX: number = 0;
 let dGoblinY: number = 0;
 let GoblinX: number = 10;
 let GoblinY: number = 8 ;
+const GoblinAggroDist: number = 4;
 
 const Space = '.'; // 0
 const Wall = '#';  // 1
 const Player = '@';
 const Goblin = 'g'
 
-const BoardFontSize = 100;
-const LogFontSize = 50;
+enum TileType
+{
+    Space = 0,
+    Wall = 1,
+    Player = 2,
+    Goblin = 3
+}
+
+const BoardFontSize = 92;
+const LogFontSize = 35;
 const LogHeightPad = 10;
-const BoardCols = 24;
-const BoardRows = 20;
+const BoardCols = 30;
+const BoardRows = 25;
 const LogCols = 30;
 const LogRows = 30;
 const CanvasWidth = 2048;
@@ -27,8 +38,22 @@ const DEBUGLineToPlayer = false;
 const DEBUGLineToGoblin = false;
 const DEBUGLineFromPlayerToGoblin = false;
 
+interface tile
+{
+    Value: number;
+    Splord: boolean;
+    Walkable: boolean;
+}
+
+interface sample_element
+{
+    X: number;
+    Y: number;
+    Count: number;
+}
+
 let MessageQueue: Array<string> = [];
-let Board: Array<number> = Array<number>(BoardRows*BoardCols);
+let Board: Array<tile> = Array<tile>(BoardRows*BoardCols);
 
 function DDMain(): void
 {
@@ -36,7 +61,8 @@ function DDMain(): void
     RegisterInputHandlers();
 
     InitializeBoard(Board);
-    Draw(); // Initial paint
+    const MapdPathListToPlayer = DistanceMapFromTarget(PlayerX, PlayerY);
+    Draw(MapdPathListToPlayer); // Initial paint
 }
 
 /*
@@ -75,7 +101,7 @@ async renderClockHands(elapsedMs) {
 }
 */
 
-function InitializeBoard(Board: Array<number>): void
+function InitializeBoard(Board: Array<tile>): void
 {
     for (let RowIndex: number = 0;
          RowIndex < BoardRows;
@@ -88,22 +114,21 @@ function InitializeBoard(Board: Array<number>): void
             if  ((RowIndex == 0) ||
                  (ColIndex == 0) ||
                  (RowIndex == BoardRows - 1) ||
-                 (ColIndex == BoardCols - 1))
+                 (ColIndex == BoardCols - 1)) // Walls
             {
-                Board[RowIndex*BoardCols+ColIndex] = 1; // Wall
+                Board[RowIndex*BoardCols+ColIndex] = {Value: TileType.Wall, Splord: false, Walkable: false};
             }
-            else
+            else // Air
             {
-                Board[RowIndex*BoardCols+ColIndex] = 0; // Space
+                Board[RowIndex*BoardCols+ColIndex] = {Value: TileType.Space, Splord: false, Walkable: true};
             }
         }
     }
-    Board[(PlayerY+3)*BoardCols+PlayerX+4] = 1;
-    Board[PlayerY*BoardCols+PlayerX] = 2; // Player
-    Board[GoblinY*BoardCols+GoblinX] = 3; // Goblin
+    Board[PlayerY*BoardCols+PlayerX] = {Value: TileType.Player, Splord: true, Walkable: false}; // TODO(cjb): Diffrent way to keep track of player
+    Board[GoblinY*BoardCols+GoblinX] = {Value: TileType.Goblin, Splord: false, Walkable: false};
 }
 
-function Draw(): void
+function Draw(MapdPathListToPlayer: Array<number> ): void
 {
     const Canvas = document.getElementById("canvas") as HTMLCanvasElement;
     if (Canvas.getContext)
@@ -132,18 +157,23 @@ function Draw(): void
                      ColIndex < BoardCols;
                      ++ColIndex)
                 {
-                    const BoardValue = Board[RowIndex*BoardCols+ColIndex];
-                    if (BoardValue == 0) // Space
+                    // Check player can see this far...
+                    if (MapdPathListToPlayer[RowIndex*BoardCols+ColIndex] > PlayerSeeDist)
+                    {
+                        continue;
+                    }
+                    const TileId = Board[RowIndex*BoardCols+ColIndex].Value;
+                    if (TileId == TileType.Space)
                     {
                         Ctx.fillStyle = "rgb(50, 50, 50)";
                         Ctx.fillText(Space, ColIndex*SpaceDim.width, (RowIndex+1)*WallDim.actualBoundingBoxAscent);
                     }
-                    else if (BoardValue == 1) // Wall
+                    else if (TileId == TileType.Wall)
                     {
                         Ctx.fillStyle = "rgb(255, 255, 255)";
                         Ctx.fillText(Wall, ColIndex*WallDim.width, (RowIndex+1)*WallDim.actualBoundingBoxAscent);
                     }
-                    else if (BoardValue == 2) // Player
+                    else if (TileId == TileType.Player)
                     {
                        Ctx.fillStyle = "rgb(0, 255, 0)";
                        Ctx.fillText(Player, PlayerDim.width*PlayerX, WallDim.actualBoundingBoxAscent*(PlayerY+1));
@@ -156,7 +186,7 @@ function Draw(): void
                            Ctx.stroke();
                        }
                     }
-                    else if (BoardValue == 3) // Goblin
+                    else if (TileId == TileType.Goblin)
                     {
                        Ctx.fillStyle = "rgb(255, 0, 0)";
                        Ctx.fillText(Goblin, GoblinDim.width*GoblinX, WallDim.actualBoundingBoxAscent*(GoblinY+1));
@@ -183,48 +213,41 @@ function Draw(): void
 /***
 * Draw message box
 */
+            const HeightDim = Ctx.measureText('a').actualBoundingBoxAscent;
             while (MessageQueue.length > LogRows)
             {
                 MessageQueue.shift();
             }
-
             Ctx.font = LogFontSize as unknown as string + 'px vt';
             for (let MessageIndex: number = 0;
                  MessageIndex < MessageQueue.length;
                  ++MessageIndex)
-             {
-                 const Message = MessageQueue[MessageIndex];
-                 const MessageDim = Ctx.measureText(Message);
-                 Ctx.fillText(Message, (BoardCols + 1)*WallDim.width, MessageDim.actualBoundingBoxAscent*(MessageIndex + 1) + LogHeightPad*(MessageIndex + 1));
-             }
+            {
+                const Message = MessageQueue[MessageIndex];
+                Ctx.fillText(Message, (BoardCols + 1)*WallDim.width, HeightDim*(MessageIndex + 1));// + LogHeightPad*(MessageIndex + 1));
+            }
+/***
+* Draw info box
+*/
+            const PlayerPosStr = `Pos: (${PlayerX}, ${PlayerY})`;
+            Ctx.fillText(PlayerPosStr, (BoardCols + 1)*WallDim.width, HeightDim*LogRows);// + (LogRows*LogHeightPad));
+
+            const PlayerHPStr = `HP: ${PlayerHP}`;
+            Ctx.fillText(PlayerHPStr, (BoardCols + 1)*WallDim.width, HeightDim*(LogRows + 1));// + ((LogRows + 1)*LogHeightPad));
         }
     }
 }
 
-interface sample_element
+function DistanceMapFromTarget(TargetX: number, TargetY: number): Array<number>
 {
-    X: number;
-    Y: number;
-    Count: number;
-}
-
-function UpdateEnemy(): void
-{
-    const dX = PlayerX - GoblinX;
-    const dY = PlayerY - GoblinY;
-    const Distance = Math.sqrt(dX*dX + dY*dY);
-    MessageQueue.push(`${Distance}`);
-
-    // Sample alogrithm
+    // Sample walk alogrithm
     const PathList: Array<sample_element> = [];
-    PathList.push({X: PlayerX, Y: PlayerY, Count: 0});
-
+    PathList.push({X: TargetX, Y: TargetY, Count: 0});
     for (let PathListIndex: number = 0;
          PathListIndex < PathList.length;
          ++PathListIndex)
     {
         const CurrentSampleElement = PathList[PathListIndex];
-
         let nAdjTiles: number = 0;
         const AdjTiles = Array<sample_element>(4);
         if (CurrentSampleElement.X + 1 < BoardCols)
@@ -249,27 +272,23 @@ function UpdateEnemy(): void
          {
              const AdjTile = AdjTiles[AdjTileIndex];
 
-             // Tile is "moveable"
-             if (Board[AdjTile.Y*BoardCols + AdjTile.X] != 1) // not a Wall
+            // Don't add tiles that exist in PathList
+            let ExistsInPathList: boolean = false;
+            for (let PathListIndex: number =  0;
+                 PathListIndex < PathList.length;
+                 ++PathListIndex)
              {
-                // Don't add tiles that exist in PathList
-                let ExistsInPathList: boolean = false;
-                for (let PathListIndex: number =  0;
-                     PathListIndex < PathList.length;
-                     ++PathListIndex)
+                 if ((PathList[PathListIndex].X == AdjTile.X) &&
+                     (PathList[PathListIndex].Y == AdjTile.Y))
                  {
-                     if ((PathList[PathListIndex].X == AdjTile.X) &&
-                         (PathList[PathListIndex].Y == AdjTile.Y))
-                     {
-                         ExistsInPathList = true;
-                         break;
-                     }
+                     ExistsInPathList = true;
+                     break;
                  }
-                 // Push valid tile
-                 if (!ExistsInPathList)
-                 {
-                     PathList.push(AdjTile);
-                 }
+             }
+             // Push valid tile
+             if (!ExistsInPathList)
+             {
+                 PathList.push(AdjTile);
              }
          }
     }
@@ -279,14 +298,13 @@ function UpdateEnemy(): void
     {
         throw("PANIC");
     }
-    const MapdPathList = Array<number>(BoardRows*BoardCols); // Init?
+    const MapdPathList = Array<number>(BoardRows*BoardCols);
     for (let MapdPathIndex: number = 0;
          MapdPathIndex < MapdPathList.length;
          ++MapdPathIndex)
     {
-        MapdPathList[MapdPathIndex] = 10000;
+        MapdPathList[MapdPathIndex] = 10000; // What should initialization be here?
     }
-
     for (let PathListIndex: number = 0;
          PathListIndex < PathList.length;
          ++PathListIndex)
@@ -295,42 +313,54 @@ function UpdateEnemy(): void
         MapdPathList[SampleElement.Y*BoardCols+SampleElement.X] = SampleElement.Count;
     }
 
+    return MapdPathList;
+}
+
+function UpdateEnemy(MapdPathListToPlayer: Array<number> ): void
+{
     // From enemy pos decide where to move
-    let TargetTile: sample_element = {X: -1, Y: -1, Count: -1};
+    let TargetTile: sample_element = {X: GoblinX, Y: GoblinY, Count: MapdPathListToPlayer[GoblinY*BoardCols+GoblinX]};
     if (GoblinX + 1 < BoardCols)
     {
-        if ((MapdPathList[GoblinY*BoardCols+GoblinX + 1] < TargetTile.Count) ||
+        if ((Board[GoblinY*BoardCols+GoblinX + 1].Walkable) &&
+            (MapdPathListToPlayer[GoblinY*BoardCols+GoblinX + 1] < TargetTile.Count) ||
             (TargetTile.Count == -1))
         {
-            TargetTile = {X: GoblinX + 1, Y: GoblinY, Count:  MapdPathList[GoblinY*BoardCols+GoblinX + 1]};
+            TargetTile = {X: GoblinX + 1, Y: GoblinY, Count:  MapdPathListToPlayer[GoblinY*BoardCols+GoblinX + 1]};
         }
     }
     if (GoblinX - 1 > -1)
     {
-        if ((MapdPathList[GoblinY*BoardCols+GoblinX - 1] < TargetTile.Count) ||
+        if ((Board[GoblinY*BoardCols+GoblinX - 1].Walkable) &&
+            (MapdPathListToPlayer[GoblinY*BoardCols+GoblinX - 1] < TargetTile.Count) ||
             (TargetTile.Count == -1))
         {
-            TargetTile = {X: GoblinX - 1, Y: GoblinY, Count:  MapdPathList[GoblinY*BoardCols+GoblinX - 1]};
+            TargetTile = {X: GoblinX - 1, Y: GoblinY, Count:  MapdPathListToPlayer[GoblinY*BoardCols+GoblinX - 1]};
         }
     }
     if (GoblinY + 1 < BoardRows)
     {
-        if ((MapdPathList[(GoblinY + 1)*BoardCols+GoblinX] < TargetTile.Count) ||
+        if ((Board[(GoblinY + 1)*BoardCols+GoblinX].Walkable) &&
+            (MapdPathListToPlayer[(GoblinY + 1)*BoardCols+GoblinX] < TargetTile.Count) ||
             (TargetTile.Count == -1))
         {
-            TargetTile = {X: GoblinX, Y: GoblinY + 1, Count:  MapdPathList[(GoblinY + 1)*BoardCols+GoblinX]};
+            TargetTile = {X: GoblinX, Y: GoblinY + 1, Count:  MapdPathListToPlayer[(GoblinY + 1)*BoardCols+GoblinX]};
         }
     }
     if (GoblinY - 1 > -1)
     {
-        if ((MapdPathList[(GoblinY - 1)*BoardCols+GoblinX] < TargetTile.Count) ||
+        if ((Board[(GoblinY - 1)*BoardCols+GoblinX].Walkable) &&
+            (MapdPathListToPlayer[(GoblinY - 1)*BoardCols+GoblinX] < TargetTile.Count) ||
             (TargetTile.Count == -1))
         {
-            TargetTile = {X: GoblinX, Y: GoblinY - 1, Count: MapdPathList[(GoblinY - 1)*BoardCols+GoblinX]};
+            TargetTile = {X: GoblinX, Y: GoblinY - 1, Count: MapdPathListToPlayer[(GoblinY - 1)*BoardCols+GoblinX]};
         }
     }
 
-    if (TargetTile.Count != -1)
+    const dX = PlayerX - GoblinX;
+    const dY = PlayerY - GoblinY;
+    const Distance = Math.sqrt(dX*dX + dY*dY);
+    if (Distance <= GoblinAggroDist)
     {
         GoblinX = TargetTile.X;
         GoblinY = TargetTile.Y;
@@ -343,7 +373,9 @@ function PlayerMoveHandler(Event: KeyboardEvent): void
 
     dPlayerX = 0
     dPlayerY = 0;
-    Board[PlayerY*BoardCols+PlayerX] = 0;
+
+    // HACK(cjb): just set value to space
+    Board[PlayerY*BoardCols+PlayerX].Value = TileType.Space; // Example of issue with player being apart of board
     if (Event.key === 'a')
     {
         dPlayerX--;
@@ -360,18 +392,22 @@ function PlayerMoveHandler(Event: KeyboardEvent): void
     {
         dPlayerY++;
     }
-    if (Board[PlayerY*BoardCols + PlayerX + dPlayerX] != 1)
+    if (Board[PlayerY*BoardCols + PlayerX + dPlayerX].Walkable)
     {
         PlayerX += dPlayerX;
     }
-    if (Board[(PlayerY+dPlayerY)*BoardCols + PlayerX] != 1)
+    if (Board[(PlayerY+dPlayerY)*BoardCols + PlayerX].Walkable)
     {
         PlayerY += dPlayerY;
     }
-    Board[PlayerY*BoardCols+PlayerX] = 2; // Player
-    MessageQueue.push(`PlayerX: ${PlayerX}, PlayerY: ${PlayerY}`);
-    UpdateEnemy();
-    Draw();
+    Board[PlayerY*BoardCols+PlayerX].Value = TileType.Player;
+    const MapdPathListToPlayer = DistanceMapFromTarget(PlayerX, PlayerY);
+
+/***
+* Update lighting
+*/
+    UpdateEnemy(MapdPathListToPlayer);
+    Draw(MapdPathListToPlayer);
 }
 
 function RegisterInputHandlers(): void
